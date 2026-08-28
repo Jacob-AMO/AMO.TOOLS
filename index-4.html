@@ -1,0 +1,702 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>AMO Tools — Offshore Stock</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    --bg:#05322b;
+    --panel:#0b433a;
+    --panel-raised:#0f5245;
+    --line:#1e6b58;
+    --text:#eaf5f1;
+    --muted:#9fc4b8;
+    --teal:#02bc94;
+    --teal-dim:#018374;
+    --amber:#e6a53c;
+    --rust:#d6603f;
+    --radius:14px;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
+    font-family:'Inter',system-ui,sans-serif; -webkit-font-smoothing:antialiased;}
+  body{padding-bottom:78px;}
+  h1,h2,h3{font-family:'Big Shoulders Display',sans-serif; font-weight:800; margin:0; letter-spacing:.02em;}
+  .mono{font-family:'IBM Plex Mono',monospace;}
+  a{color:inherit;}
+
+  /* Top bar */
+  header.top{
+    position:sticky; top:0; z-index:20;
+    background:linear-gradient(180deg,#0a4739 0%, #05322bee 100%);
+    backdrop-filter:blur(6px);
+    border-bottom:1px solid var(--line);
+    padding:14px 16px 12px;
+  }
+  .brand-row{display:flex; align-items:baseline; justify-content:space-between;}
+  .brand{font-size:26px; text-transform:uppercase; line-height:1;}
+  .brand small{display:block; font-family:'IBM Plex Mono',monospace; font-size:10px;
+    letter-spacing:.18em; color:var(--muted); font-weight:500; margin-top:3px;}
+  .vessel-picker{display:flex; gap:6px; margin-top:12px;}
+  .vessel-picker button{
+    flex:1; padding:8px 4px; border-radius:10px; border:1px solid var(--line);
+    background:var(--panel); color:var(--muted); font-family:'IBM Plex Mono',monospace;
+    font-size:12px; letter-spacing:.05em; font-weight:600;
+  }
+  .vessel-picker button.active{background:var(--teal-dim); border-color:var(--teal); color:#eafff9;}
+
+  main{padding:14px 14px 8px; max-width:640px; margin:0 auto;}
+  .section-title{display:flex; align-items:center; justify-content:space-between; margin:18px 2px 10px;}
+  .section-title h2{font-size:19px; text-transform:uppercase;}
+  .section-title .count{font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--muted);}
+
+  .searchbar{
+    display:flex; align-items:center; gap:8px; background:var(--panel);
+    border:1px solid var(--line); border-radius:12px; padding:10px 12px; margin-top:10px;
+  }
+  .searchbar input{flex:1; background:none; border:none; outline:none; color:var(--text); font-size:14px;}
+  .searchbar input::placeholder{color:var(--muted);}
+
+  .subtabs{display:flex; gap:8px; margin-top:12px;}
+  .subtabs button{
+    padding:7px 14px; border-radius:20px; border:1px solid var(--line); background:transparent;
+    color:var(--muted); font-size:13px; font-weight:600;
+  }
+  .subtabs button.active{background:var(--teal); border-color:var(--teal); color:#0b1512;}
+
+  /* Stock gauge card */
+  .item-card{
+    background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+    padding:12px 14px; margin-bottom:10px;
+  }
+  .item-top{display:flex; justify-content:space-between; align-items:flex-start; gap:10px;}
+  .item-name{font-size:15px; font-weight:600;}
+  .item-sub{font-size:11px; color:var(--muted); font-family:'IBM Plex Mono',monospace; margin-top:2px;}
+  .item-qty{font-family:'IBM Plex Mono',monospace; font-size:20px; font-weight:600; text-align:right; white-space:nowrap;}
+  .item-qty span{font-size:11px; color:var(--muted); font-weight:400;}
+  .gauge{height:6px; border-radius:4px; background:#04241e; margin-top:10px; overflow:hidden; border:1px solid var(--line);}
+  .gauge i{display:block; height:100%; background:linear-gradient(90deg,var(--teal-dim),var(--teal));}
+  .gauge.low i{background:linear-gradient(90deg,#8a5a1f,var(--amber));}
+  .gauge.zero i{background:var(--rust);}
+  .item-actions{display:flex; gap:8px; margin-top:10px;}
+  .item-actions button{
+    flex:1; padding:8px 0; border-radius:9px; border:1px solid var(--line);
+    background:var(--panel-raised); color:var(--text); font-size:13px; font-weight:600;
+  }
+  .item-actions button.use{color:var(--rust); border-color:#4a2a22;}
+  .item-actions button.fill{color:var(--teal); border-color:#20463f;}
+
+  /* Generic list rows (battery / orders / crew) */
+  .row-card{
+    background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+    padding:12px 14px; margin-bottom:10px;
+  }
+  .row-top{display:flex; justify-content:space-between; gap:10px;}
+  .row-title{font-size:15px; font-weight:600;}
+  .row-meta{font-size:12px; color:var(--muted); margin-top:3px; line-height:1.5;}
+  .badge{
+    font-family:'IBM Plex Mono',monospace; font-size:10px; padding:3px 8px; border-radius:20px;
+    text-transform:uppercase; letter-spacing:.04em; white-space:nowrap; height:fit-content;
+  }
+  .badge.pending{background:#402f14; color:var(--amber);}
+  .badge.ordered{background:#173a44; color:#6fc4d8;}
+  .badge.received{background:#173a26; color:#5fcf8e;}
+
+  .crew-date{font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--amber);
+    margin:18px 2px 6px; letter-spacing:.06em;}
+  .crew-team{font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.08em; margin-bottom:4px;}
+
+  .empty{text-align:center; color:var(--muted); padding:40px 20px; font-size:14px;}
+  .empty b{display:block; color:var(--text); font-family:'Big Shoulders Display'; font-size:20px; margin-bottom:6px;}
+
+  /* Bottom nav */
+  nav.bottom{
+    position:fixed; bottom:0; left:0; right:0; z-index:30;
+    background:#0a4739ee; backdrop-filter:blur(8px); border-top:1px solid var(--line);
+    display:flex; padding:6px 4px calc(6px + env(safe-area-inset-bottom));
+  }
+  nav.bottom button{
+    flex:1; background:none; border:none; color:var(--muted); padding:8px 2px 4px;
+    display:flex; flex-direction:column; align-items:center; gap:4px; font-size:10.5px;
+    font-weight:600; letter-spacing:.03em; text-transform:uppercase;
+  }
+  nav.bottom button .dot{width:5px; height:5px; border-radius:50%; background:transparent;}
+  nav.bottom button.active{color:var(--teal);}
+  nav.bottom button.active .dot{background:var(--teal);}
+
+  /* FAB */
+  .fab{
+    position:fixed; right:18px; bottom:78px; z-index:25;
+    width:54px; height:54px; border-radius:50%; border:none;
+    background:var(--teal); color:#08211c; font-size:30px; font-weight:400;
+    box-shadow:0 8px 20px #0006; padding:0;
+    display:flex; align-items:center; justify-content:center;
+    font-family:Arial,sans-serif;
+  }
+  .fab span{display:block; transform:translateY(-1px);}
+
+  /* Sheet / modal */
+  .overlay{position:fixed; inset:0; background:#000a; z-index:40; display:none;}
+  .overlay.show{display:block;}
+  .sheet{
+    position:fixed; left:0; right:0; bottom:0; z-index:41; max-height:88vh; overflow-y:auto;
+    background:var(--panel); border-radius:20px 20px 0 0; border:1px solid var(--line); border-bottom:none;
+    padding:16px 18px calc(20px + env(safe-area-inset-bottom)); transform:translateY(100%);
+    transition:transform .25s ease;
+  }
+  .overlay.show .sheet{transform:translateY(0);}
+  .sheet h3{font-size:20px; text-transform:uppercase; margin-bottom:14px;}
+  .field{margin-bottom:12px;}
+  .field label{display:block; font-size:11px; color:var(--muted); text-transform:uppercase;
+    letter-spacing:.05em; margin-bottom:5px; font-weight:600;}
+  .field input, .field select, .field textarea{
+    width:100%; background:var(--panel-raised); border:1px solid var(--line); border-radius:10px;
+    padding:11px 12px; color:var(--text); font-size:15px; font-family:'Inter',sans-serif;
+  }
+  .field textarea{resize:vertical; min-height:60px;}
+  .sign-toggle{display:flex; gap:8px;}
+  .sign-toggle button{flex:1; padding:11px 0; border-radius:10px; border:1px solid var(--line);
+    background:var(--panel-raised); color:var(--muted); font-weight:700;}
+  .sign-toggle button.sel-fill{background:var(--teal-dim); border-color:var(--teal); color:#eafff9;}
+  .sign-toggle button.sel-use{background:#4a2a22; border-color:var(--rust); color:#ffe4dc;}
+  .sheet-actions{display:flex; gap:10px; margin-top:16px;}
+  .sheet-actions button{flex:1; padding:13px 0; border-radius:11px; border:none; font-weight:700; font-size:14px;}
+  .btn-cancel{background:var(--panel-raised); color:var(--muted); border:1px solid var(--line) !important;}
+  .btn-save{background:var(--teal); color:#08211c;}
+
+  .config-banner{
+    background:#402f14; border:1px solid #6b4f1f; color:var(--amber); font-size:12.5px;
+    padding:10px 14px; border-radius:12px; margin-bottom:14px; line-height:1.5;
+  }
+  .toast{
+    position:fixed; left:50%; bottom:100px; transform:translateX(-50%); z-index:50;
+    background:#1e2a30; border:1px solid var(--line); color:var(--text); padding:10px 18px;
+    border-radius:30px; font-size:13px; opacity:0; transition:opacity .2s; pointer-events:none;
+  }
+  .toast.show{opacity:1;}
+
+  /* Login screen */
+  #loginScreen{
+    position:fixed; inset:0; z-index:60; background:var(--bg);
+    display:flex; flex-direction:column; justify-content:center; padding:24px;
+  }
+  .login-box{max-width:360px; margin:0 auto; width:100%;}
+  .login-brand{text-align:center; margin-bottom:28px;}
+  .login-brand h1{font-size:34px; text-transform:uppercase;}
+  .login-brand small{display:block; font-family:'IBM Plex Mono',monospace; font-size:11px;
+    letter-spacing:.18em; color:var(--muted); margin-top:4px;}
+  .login-error{background:#402014; border:1px solid #6b2f1f; color:var(--rust); font-size:13px;
+    padding:9px 12px; border-radius:10px; margin-bottom:14px; display:none;}
+  .login-error.show{display:block;}
+  #btnLogin{width:100%; padding:13px 0; border-radius:11px; border:none; background:var(--teal);
+    color:#08211c; font-weight:700; font-size:15px; margin-top:6px;}
+  #btnLogin:disabled{opacity:.6;}
+  .login-hint{text-align:center; color:var(--muted); font-size:12px; margin-top:18px; line-height:1.5;}
+
+  /* Logout in header */
+  .signout{background:none; border:1px solid var(--line); color:var(--muted); border-radius:9px;
+    padding:6px 10px; font-size:11px; font-family:'IBM Plex Mono',monospace;}
+</style>
+</head>
+<body>
+
+<div id="loginScreen">
+  <div class="login-box">
+    <div class="login-brand">
+      <h1>AMO Tools</h1>
+      <small>OFFSHORE STOCK &amp; ASSET TRACKING</small>
+    </div>
+    <div class="login-error" id="loginError"></div>
+    <div class="field"><label>Email</label><input id="loginEmail" type="email" autocomplete="username" placeholder="you@company.com"></div>
+    <div class="field"><label>Password</label><input id="loginPassword" type="password" autocomplete="current-password" placeholder="••••••••"></div>
+    <button id="btnLogin">Sign in</button>
+    <div class="login-hint">No personal account? Ask your admin for the shared guest login.</div>
+  </div>
+</div>
+
+<header class="top" id="appHeader" style="display:none;">
+  <div class="brand-row">
+    <h1 class="brand">AMO Tools<small>OFFSHORE STOCK &amp; ASSET TRACKING</small></h1>
+    <button class="signout" id="btnLogout">Sign out</button>
+  </div>
+  <div class="vessel-picker" id="vesselPicker"></div>
+</header>
+
+<main id="main" style="display:none;"></main>
+
+<button class="fab" id="fab" style="display:none;"><span>+</span></button>
+
+<nav class="bottom" id="bottomNav" style="display:none;">
+  <button data-tab="stock"><span>⛽</span>Stock<span class="dot"></span></button>
+  <button data-tab="battery"><span>🔋</span>Batteries<span class="dot"></span></button>
+  <button data-tab="crew"><span>👷</span>Crew<span class="dot"></span></button>
+  <button data-tab="orders"><span>📦</span>Orders<span class="dot"></span></button>
+</nav>
+
+<div class="overlay" id="overlay"><div class="sheet" id="sheet"></div></div>
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============================================================
+   1) CONFIG — enter your Supabase credentials (Project Settings -> API)
+   ============================================================ */
+const SUPABASE_URL = 'https://tvaicxwcsybakvnkumzx.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR2YWljeHdjc3liYWt2bmt1bXp4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc4NDAwNzYsImV4cCI6MjEwMzQxNjA3Nn0.-WyAx-_od2U4l-rfLMJSndmVbnzOX6w5c4mifcopeH4';
+
+const configured = !SUPABASE_URL.startsWith('YOUR_') && !SUPABASE_ANON_KEY.startsWith('YOUR_');
+const sb = configured ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+
+/* ============================================================
+   1b) AUTH — sign-in gate. Accounts are created by an admin in
+   Supabase (Authentication -> Users -> Add user), not self-signup.
+   ============================================================ */
+const $loginScreen = document.getElementById('loginScreen');
+const $appHeader = document.getElementById('appHeader');
+const $loginError = document.getElementById('loginError');
+
+function showLogin(){
+  $loginScreen.style.display='flex';
+  $appHeader.style.display='none';
+  document.getElementById('main').style.display='none';
+  document.getElementById('fab').style.display='none';
+  document.getElementById('bottomNav').style.display='none';
+}
+function showApp(){
+  $loginScreen.style.display='none';
+  $appHeader.style.display='block';
+  document.getElementById('main').style.display='block';
+  document.getElementById('fab').style.display='flex';
+  document.getElementById('bottomNav').style.display='flex';
+}
+async function doLogin(){
+  const email = document.getElementById('loginEmail').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  const btn = document.getElementById('btnLogin');
+  $loginError.classList.remove('show');
+  if(!email || !password){ $loginError.textContent='Enter email and password.'; $loginError.classList.add('show'); return; }
+  btn.disabled = true; btn.textContent = 'Signing in...';
+  const {error} = await sb.auth.signInWithPassword({email, password});
+  btn.disabled = false; btn.textContent = 'Sign in';
+  if(error){ $loginError.textContent = 'Incorrect email or password.'; $loginError.classList.add('show'); }
+}
+async function checkAdmin(){
+  const {data} = await sb.from('admins').select('user_id');
+  isAdmin = !!(data && data.length);
+}
+let profileMap = {}; // user_id -> display label
+async function loadProfiles(){
+  const {data, error} = await sb.from('profiles').select('id, email, display_name');
+  if(error){ console.error(error); return; }
+  profileMap = {};
+  (data||[]).forEach(p=>{ profileMap[p.id] = p.display_name || p.email || p.id; });
+}
+function whoLabel(userId){
+  if(!userId) return '—';
+  return profileMap[userId] || 'Unknown user';
+}
+async function initAuth(){
+  if(!configured) return; // config banner in render() already covers this case
+  document.getElementById('btnLogin').addEventListener('click', doLogin);
+  document.getElementById('loginPassword').addEventListener('keydown', e=>{ if(e.key==='Enter') doLogin(); });
+  document.getElementById('btnLogout').addEventListener('click', async ()=>{ await sb.auth.signOut(); });
+  sb.auth.onAuthStateChange(async (_event, session)=>{
+    if(session){ await checkAdmin(); await loadProfiles(); showApp(); render(); } else { isAdmin=false; showLogin(); }
+  });
+  const {data:{session}} = await sb.auth.getSession();
+  if(session){ await checkAdmin(); await loadProfiles(); showApp(); render(); } else { showLogin(); }
+}
+
+/* ============================================================
+   2) STATE
+   ============================================================ */
+const VESSELS = ['CT-1','CT-2'];
+let state = { tab:'stock', vessel:'CT-1', stockCat:'oil', search:'', data:{} };
+let isAdmin = false;
+
+const $main = document.getElementById('main');
+const $overlay = document.getElementById('overlay');
+const $sheet = document.getElementById('sheet');
+const $toast = document.getElementById('toast');
+
+function toast(msg){
+  $toast.textContent = msg;
+  $toast.classList.add('show');
+  setTimeout(()=>$toast.classList.remove('show'), 1800);
+}
+function closeSheet(){ $overlay.classList.remove('show'); }
+function openSheet(html){ $sheet.innerHTML = html; $overlay.classList.add('show'); }
+$overlay.addEventListener('click', e=>{ if(e.target===$overlay) closeSheet(); });
+
+/* ============================================================
+   3) NAV
+   ============================================================ */
+document.getElementById('vesselPicker').innerHTML = VESSELS.map(v=>
+  `<button data-v="${v}" class="${v===state.vessel?'active':''}">${v}</button>`).join('');
+document.getElementById('vesselPicker').addEventListener('click', e=>{
+  const b = e.target.closest('button'); if(!b) return;
+  state.vessel = b.dataset.v; render();
+});
+document.getElementById('bottomNav').addEventListener('click', e=>{
+  const b = e.target.closest('button'); if(!b) return;
+  state.tab = b.dataset.tab; state.search=''; render();
+});
+document.getElementById('fab').addEventListener('click', ()=>{
+  if(state.tab==='stock') openStockForm();
+  if(state.tab==='battery') openBatteryForm();
+  if(state.tab==='crew'){
+    if(!isAdmin){ toast('Only the team leader can edit the crew plan'); return; }
+    openCrewForm();
+  }
+  if(state.tab==='orders') openOrderForm();
+});
+
+/* ============================================================
+   4) DATA LAYER (Supabase)
+   ============================================================ */
+async function fetchStock(){
+  const {data, error} = await sb.from('stock_levels').select('*')
+    .eq('vessel', state.vessel).eq('category', state.stockCat).order('name');
+  if(error){ toast('Load failed'); console.error(error); return []; }
+  return data;
+}
+async function fetchBattery(){
+  const {data, error} = await sb.from('battery_tracking').select('*').order('item_no');
+  if(error){ toast('Load failed'); console.error(error); return []; }
+  return data;
+}
+async function fetchCrew(){
+  const {data, error} = await sb.from('crew_change_plan').select('*')
+    .order('shift_date', {ascending:false}).order('id');
+  if(error){ toast('Load failed'); console.error(error); return []; }
+  return data;
+}
+async function fetchOrders(){
+  const {data, error} = await sb.from('order_tracking').select('*').order('created_at', {ascending:false});
+  if(error){ toast('Load failed'); console.error(error); return []; }
+  return data;
+}
+
+/* ============================================================
+   5) RENDER
+   ============================================================ */
+async function render(){
+  document.querySelectorAll('#bottomNav button').forEach(b=>
+    b.classList.toggle('active', b.dataset.tab===state.tab));
+  document.querySelectorAll('#vesselPicker button').forEach(b=>
+    b.classList.toggle('active', b.dataset.v===state.vessel));
+  document.getElementById('vesselPicker').style.display = state.tab==='stock' ? 'flex' : 'none';
+  document.getElementById('fab').style.display = (state.tab==='crew' && !isAdmin) ? 'none' : 'flex';
+
+  if(!configured){
+    document.getElementById('loginScreen').style.display='none';
+    document.getElementById('appHeader').style.display='block';
+    document.getElementById('main').style.display='block';
+    $main.innerHTML = `<div class="config-banner">
+      <b style="display:block;margin-bottom:4px;">⚠ Supabase not connected</b>
+      Enter your SUPABASE_URL and SUPABASE_ANON_KEY at the top of the &lt;script&gt; tag in this file
+      (Supabase → Project Settings → API), then run schema.sql in the SQL Editor.
+      No data will show until this is done.
+    </div>`;
+    return;
+  }
+
+  if(state.tab==='stock') return renderStock();
+  if(state.tab==='battery') return renderBattery();
+  if(state.tab==='crew') return renderCrew();
+  if(state.tab==='orders') return renderOrders();
+}
+
+async function renderStock(){
+  $main.innerHTML = `<div class="subtabs">
+      <button data-c="oil" class="${state.stockCat==='oil'?'active':''}">Oil</button>
+      <button data-c="filter" class="${state.stockCat==='filter'?'active':''}">Filters</button>
+    </div>
+    <div class="searchbar"><span>🔎</span><input id="q" placeholder="Search by name..." value="${state.search}"></div>
+    <div class="section-title"><h2>${state.vessel} Offshore Stock · ${state.stockCat==='oil'?'Oil':'Filters'}</h2>
+      <span class="count" id="cnt"></span></div>
+    <div id="list"><div class="empty">Loading...</div></div>`;
+
+  $main.querySelector('.subtabs').addEventListener('click', e=>{
+    const b=e.target.closest('button'); if(!b) return; state.stockCat=b.dataset.c; render();
+  });
+  $main.querySelector('#q').addEventListener('input', e=>{ state.search=e.target.value; filterAndPaintStock(); });
+
+  state.data.stock = await fetchStock();
+  filterAndPaintStock();
+}
+function filterAndPaintStock(){
+  const items = (state.data.stock||[]).filter(i=>
+    i.name.toLowerCase().includes(state.search.toLowerCase()));
+  document.getElementById('cnt').textContent = items.length + ' items';
+  const list = document.getElementById('list');
+  if(!items.length){ list.innerHTML = `<div class="empty"><b>Empty</b>Nothing found. Add an item with the "+" button.</div>`; return; }
+  const maxQty = Math.max(...items.map(i=>Math.max(i.current_qty, i.low_stock_threshold||0, 1)));
+  list.innerHTML = items.map(i=>{
+    const pct = Math.max(0, Math.min(100, (i.current_qty/maxQty)*100));
+    const gclass = i.current_qty<=0 ? 'zero' : (i.low_stock_threshold && i.current_qty<=i.low_stock_threshold ? 'low' : '');
+    return `<div class="item-card">
+      <div class="item-top">
+        <div><div class="item-name">${i.name}</div><div class="item-sub">${i.vessel} · ${i.category}</div></div>
+        <div class="item-qty">${fmtNum(i.current_qty)} <span>${i.unit}</span></div>
+      </div>
+      <div class="gauge ${gclass}"><i style="width:${pct}%"></i></div>
+      <div class="item-actions">
+        <button class="use" data-id="${i.item_id}" data-name="${i.name}" data-unit="${i.unit}" data-mode="use">− Use</button>
+        <button class="fill" data-id="${i.item_id}" data-name="${i.name}" data-unit="${i.unit}" data-mode="fill">+ Refill</button>
+        <button class="hist" data-id="${i.item_id}" data-name="${i.name}" data-unit="${i.unit}" style="flex:.7;">📜 Log</button>
+      </div>
+    </div>`;
+  }).join('');
+  list.querySelectorAll('.item-actions .use, .item-actions .fill').forEach(b=>
+    b.addEventListener('click', ()=>openStockTxnForm(b.dataset.id, b.dataset.name, b.dataset.unit, b.dataset.mode)));
+  list.querySelectorAll('.item-actions .hist').forEach(b=>
+    b.addEventListener('click', ()=>openStockHistory(b.dataset.id, b.dataset.name, b.dataset.unit)));
+}
+function fmtNum(n){ return Number(n).toLocaleString('ru-RU', {maximumFractionDigits:2}); }
+
+async function renderBattery(){
+  $main.innerHTML = `<div class="searchbar"><span>🔎</span><input id="q" placeholder="Search by asset..." value="${state.search}"></div>
+    <div class="section-title"><h2>Batteries</h2><span class="count" id="cnt"></span></div>
+    <div id="list"><div class="empty">Loading...</div></div>`;
+  $main.querySelector('#q').addEventListener('input', e=>{ state.search=e.target.value; paintBattery(); });
+  state.data.battery = await fetchBattery();
+  paintBattery();
+}
+function paintBattery(){
+  const items = (state.data.battery||[]).filter(i=> (i.asset||'').toLowerCase().includes(state.search.toLowerCase()));
+  document.getElementById('cnt').textContent = items.length + ' items';
+  const list = document.getElementById('list');
+  if(!items.length){ list.innerHTML = `<div class="empty"><b>Empty</b>List is empty.</div>`; return; }
+  list.innerHTML = items.map(i=>`<div class="row-card">
+      <div class="row-top">
+        <div><div class="row-title">${i.asset}</div>
+          <div class="row-meta mono">${i.battery_data||'—'}</div>
+          <div class="row-meta">Qty: <b>${i.qty ?? '—'}</b> · Changed: ${i.changed_date||'—'}${i.comments? ' · '+i.comments:''}</div>
+          <div class="row-meta">Logged by: ${whoLabel(i.created_by)}</div>
+        </div>
+      </div></div>`).join('');
+}
+
+async function renderCrew(){
+  $main.innerHTML = `<div class="section-title"><h2>Crew Change Plan</h2><span class="count" id="cnt"></span></div>
+    ${!isAdmin ? '<div class="config-banner" style="background:#182a30;border-color:#2a4550;color:var(--muted);">👁 View only — ask your team leader for changes.</div>' : ''}
+    <div id="list"><div class="empty">Loading...</div></div>`;
+  state.data.crew = await fetchCrew();
+  const items = state.data.crew||[];
+  document.getElementById('cnt').textContent = items.length + ' records';
+  const list = document.getElementById('list');
+  if(!items.length){ list.innerHTML = `<div class="empty"><b>Empty</b>No shifts added yet.</div>`; return; }
+  const byDate = {};
+  items.forEach(i=>{ (byDate[i.shift_date] = byDate[i.shift_date]||[]).push(i); });
+  list.innerHTML = Object.keys(byDate).map(date=>{
+    const rows = byDate[date];
+    const byTeam = {};
+    rows.forEach(r=>{ (byTeam[r.team]=byTeam[r.team]||[]).push(r); });
+    return `<div class="crew-date">${date}</div>` + Object.keys(byTeam).map(team=>`
+      <div class="row-card">
+        <div class="crew-team">${team}</div>
+        ${byTeam[team].map(r=>`<div class="row-meta" style="margin-bottom:4px;">
+          <b style="color:var(--text)">${r.position||''} ${r.seq_no??''}</b> —
+          off: ${r.off_employee||'—'} · on: ${r.on_employee||'—'}
+          ${r.destination? ' · '+r.destination:''}${r.note? ' · '+r.note:''}
+          <span style="opacity:.7;"> · set by ${whoLabel(r.created_by)}</span>
+        </div>`).join('')}
+      </div>`).join('');
+  }).join('');
+}
+
+async function renderOrders(){
+  $main.innerHTML = `<div class="searchbar"><span>🔎</span><input id="q" placeholder="Search by description..." value="${state.search}"></div>
+    <div class="section-title"><h2>Orders</h2><span class="count" id="cnt"></span></div>
+    <div id="list"><div class="empty">Loading...</div></div>`;
+  $main.querySelector('#q').addEventListener('input', e=>{ state.search=e.target.value; paintOrders(); });
+  state.data.orders = await fetchOrders();
+  paintOrders();
+}
+function paintOrders(){
+  const items = (state.data.orders||[]).filter(i=> (i.description||'').toLowerCase().includes(state.search.toLowerCase()));
+  document.getElementById('cnt').textContent = items.length + ' records';
+  const list = document.getElementById('list');
+  if(!items.length){ list.innerHTML = `<div class="empty"><b>Empty</b>No orders yet.</div>`; return; }
+  list.innerHTML = items.map(i=>`<div class="row-card">
+      <div class="row-top">
+        <div><div class="row-title">${i.description}</div>
+          <div class="row-meta mono">${i.sap_mn?('SAP '+i.sap_mn+' · '):''}${i.manufacture_mn||''}</div>
+          <div class="row-meta">Qty: <b>${i.quantity ?? '—'} ${i.uom||''}</b> · Requested by: ${i.requested_by||'—'}${i.comments? ' · '+i.comments:''}</div>
+          <div class="row-meta">Logged by: ${whoLabel(i.created_by)}</div>
+        </div>
+        <span class="badge ${i.status}">${statusLabel(i.status)}</span>
+      </div></div>`).join('');
+}
+function statusLabel(s){ return {pending:'Pending', ordered:'Ordered', received:'Received'}[s] || s; }
+
+/* ============================================================
+   6) FORMS (bottom sheets)
+   ============================================================ */
+function openStockForm(){
+  openSheet(`<h3>New Stock Item</h3>
+    <div class="field"><label>Vessel</label>
+      <select id="f_vessel">${VESSELS.map(v=>`<option ${v===state.vessel?'selected':''}>${v}</option>`).join('')}</select></div>
+    <div class="field"><label>Category</label>
+      <select id="f_cat"><option value="oil" ${state.stockCat==='oil'?'selected':''}>Oil</option>
+        <option value="filter" ${state.stockCat==='filter'?'selected':''}>Filter</option></select></div>
+    <div class="field"><label>Name / part number</label><input id="f_name" placeholder="e.g. LF691 or Engine Oil 15w40"></div>
+    <div class="field"><label>Unit</label><input id="f_unit" placeholder="ea or lit" value="${state.stockCat==='oil'?'lit':'ea'}"></div>
+    <div class="field"><label>Initial quantity</label><input id="f_qty" type="number" step="any" value="0"></div>
+    <div class="sheet-actions"><button class="btn-cancel" id="cancel">Cancel</button>
+      <button class="btn-save" id="save">Add</button></div>`);
+  document.getElementById('cancel').onclick = closeSheet;
+  document.getElementById('save').onclick = async ()=>{
+    const vessel=document.getElementById('f_vessel').value, category=document.getElementById('f_cat').value;
+    const name=document.getElementById('f_name').value.trim();
+    const unit=document.getElementById('f_unit').value.trim()||'ea';
+    const qty=parseFloat(document.getElementById('f_qty').value)||0;
+    if(!name){ toast('Enter a name'); return; }
+    const {data:item, error} = await sb.from('stock_items').insert({vessel,category,name,unit}).select().single();
+    if(error){ toast('Error: item may already exist'); console.error(error); return; }
+    if(qty!==0){
+      await sb.from('stock_transactions').insert({item_id:item.id, quantity:qty, reason:'Initial quantity'});
+    }
+    closeSheet(); toast('Item added'); state.vessel=vessel; state.stockCat=category; render();
+  };
+}
+function openStockTxnForm(itemId, name, unit, mode){
+  openSheet(`<h3>${name}</h3>
+    <div class="sign-toggle">
+      <button id="m_fill" class="${mode==='fill'?'sel-fill':''}">+ Refill</button>
+      <button id="m_use" class="${mode==='use'?'sel-use':''}">− Use</button>
+    </div>
+    <div class="field" style="margin-top:14px;"><label>Quantity (${unit})</label><input id="f_qty" type="number" step="any" placeholder="0"></div>
+    <div class="field"><label>Date</label><input id="f_date" type="date" value="${new Date().toISOString().slice(0,10)}"></div>
+    <div class="field"><label>Technician</label><input id="f_tech" placeholder="Name"></div>
+    <div class="field"><label>Equipment / Asset #</label><input id="f_equip" placeholder="e.g. Power Pack / PPJ81515"></div>
+    <div class="field"><label>Reason</label><input id="f_reason" placeholder="e.g. Engine Oil change service"></div>
+    <div class="sheet-actions"><button class="btn-cancel" id="cancel">Cancel</button>
+      <button class="btn-save" id="save">Save</button></div>`);
+  let curMode = mode;
+  document.getElementById('m_fill').onclick = ()=>{ curMode='fill';
+    document.getElementById('m_fill').className='sel-fill'; document.getElementById('m_use').className=''; };
+  document.getElementById('m_use').onclick = ()=>{ curMode='use';
+    document.getElementById('m_use').className='sel-use'; document.getElementById('m_fill').className=''; };
+  document.getElementById('cancel').onclick = closeSheet;
+  document.getElementById('save').onclick = async ()=>{
+    let qty = parseFloat(document.getElementById('f_qty').value);
+    if(!qty){ toast('Enter a quantity'); return; }
+    qty = curMode==='use' ? -Math.abs(qty) : Math.abs(qty);
+    const {error} = await sb.from('stock_transactions').insert({
+      item_id: itemId, quantity: qty, txn_date: document.getElementById('f_date').value,
+      tech: document.getElementById('f_tech').value, equipment: document.getElementById('f_equip').value,
+      reason: document.getElementById('f_reason').value
+    });
+    if(error){ toast('Save failed'); console.error(error); return; }
+    closeSheet(); toast('Saved'); renderStock();
+  };
+}
+async function openStockHistory(itemId, name, unit){
+  openSheet(`<h3>${name} — Usage Log</h3><div id="histList" class="field"><div class="empty">Loading...</div></div>
+    <div class="sheet-actions"><button class="btn-cancel" id="cancel" style="flex:1;">Close</button></div>`);
+  document.getElementById('cancel').onclick = closeSheet;
+  const {data, error} = await sb.from('stock_transactions').select('*')
+    .eq('item_id', itemId).order('txn_date', {ascending:false}).order('created_at', {ascending:false});
+  const box = document.getElementById('histList');
+  if(error){ box.innerHTML = 'Failed to load history.'; console.error(error); return; }
+  if(!data.length){ box.innerHTML = '<div class="empty">No transactions yet.</div>'; return; }
+  box.innerHTML = data.map(t=>{
+    const sign = t.quantity>0 ? '+' : '';
+    const color = t.quantity>0 ? 'var(--teal)' : 'var(--rust)';
+    return `<div class="row-card" style="margin-bottom:8px;">
+      <div class="row-top">
+        <div>
+          <div class="row-title" style="color:${color};">${sign}${fmtNum(t.quantity)} ${unit}</div>
+          <div class="row-meta">${t.txn_date||'—'} · ${t.reason||'No reason given'}</div>
+          <div class="row-meta">${t.equipment? 'Equipment: '+t.equipment+' · ':''}${t.tech? 'Tech: '+t.tech+' · ':''}By: ${whoLabel(t.created_by)}</div>
+        </div>
+      </div></div>`;
+  }).join('');
+}
+function openBatteryForm(){
+  openSheet(`<h3>New Battery</h3>
+    <div class="field"><label>Asset</label><input id="f_asset" placeholder="e.g. Power Pack PPJ81515"></div>
+    <div class="field"><label>Battery data</label><input id="f_data" placeholder="12V, 62A/h, 540A, Yuasa"></div>
+    <div class="field"><label>Qty</label><input id="f_qty" type="number" value="1"></div>
+    <div class="field"><label>Changed date</label><input id="f_date" type="date"></div>
+    <div class="field"><label>Comments</label><input id="f_comments"></div>
+    <div class="sheet-actions"><button class="btn-cancel" id="cancel">Cancel</button>
+      <button class="btn-save" id="save">Add</button></div>`);
+  document.getElementById('cancel').onclick = closeSheet;
+  document.getElementById('save').onclick = async ()=>{
+    const asset=document.getElementById('f_asset').value.trim();
+    if(!asset){ toast('Enter an asset'); return; }
+    const {error} = await sb.from('battery_tracking').insert({
+      asset, battery_data:document.getElementById('f_data').value,
+      qty:parseInt(document.getElementById('f_qty').value)||null,
+      changed_date:document.getElementById('f_date').value||null,
+      comments:document.getElementById('f_comments').value
+    });
+    if(error){ toast('Save failed'); console.error(error); return; }
+    closeSheet(); toast('Added'); renderBattery();
+  };
+}
+function openCrewForm(){
+  openSheet(`<h3>New Crew Change Entry</h3>
+    <div class="field"><label>Date</label><input id="f_date" type="date" value="${new Date().toISOString().slice(0,10)}"></div>
+    <div class="field"><label>Team</label><input id="f_team" placeholder="e.g. #CT1, #CT2, PJ, B. Base"></div>
+    <div class="field"><label>Position</label><input id="f_pos" placeholder="MT / ET"></div>
+    <div class="field"><label>No.</label><input id="f_seq" type="number" value="1"></div>
+    <div class="field"><label>Off (leaving)</label><input id="f_off"></div>
+    <div class="field"><label>On (arriving)</label><input id="f_on"></div>
+    <div class="field"><label>Destination</label><input id="f_dest"></div>
+    <div class="field"><label>Note</label><input id="f_note"></div>
+    <div class="sheet-actions"><button class="btn-cancel" id="cancel">Cancel</button>
+      <button class="btn-save" id="save">Add</button></div>`);
+  document.getElementById('cancel').onclick = closeSheet;
+  document.getElementById('save').onclick = async ()=>{
+    const team=document.getElementById('f_team').value.trim();
+    const date=document.getElementById('f_date').value;
+    if(!team||!date){ toast('Fill in date and team'); return; }
+    const {error} = await sb.from('crew_change_plan').insert({
+      shift_date:date, team, position:document.getElementById('f_pos').value,
+      seq_no:parseInt(document.getElementById('f_seq').value)||null,
+      off_employee:document.getElementById('f_off').value, on_employee:document.getElementById('f_on').value,
+      destination:document.getElementById('f_dest').value, note:document.getElementById('f_note').value
+    });
+    if(error){ toast('Save failed'); console.error(error); return; }
+    closeSheet(); toast('Added'); renderCrew();
+  };
+}
+function openOrderForm(){
+  openSheet(`<h3>New Order</h3>
+    <div class="field"><label>Description</label><input id="f_desc" placeholder="e.g. Breakout Box"></div>
+    <div class="field"><label>SAP MN</label><input id="f_sap"></div>
+    <div class="field"><label>Manufacture MN</label><input id="f_mmn"></div>
+    <div class="field"><label>Quantity</label><input id="f_qty" type="number" value="1"></div>
+    <div class="field"><label>Unit</label><input id="f_uom" value="EA"></div>
+    <div class="field"><label>Requested by</label><input id="f_user"></div>
+    <div class="field"><label>Status</label>
+      <select id="f_status"><option value="pending">Pending</option><option value="ordered">Ordered</option><option value="received">Received</option></select></div>
+    <div class="field"><label>Comments</label><input id="f_comments"></div>
+    <div class="sheet-actions"><button class="btn-cancel" id="cancel">Cancel</button>
+      <button class="btn-save" id="save">Add</button></div>`);
+  document.getElementById('cancel').onclick = closeSheet;
+  document.getElementById('save').onclick = async ()=>{
+    const description=document.getElementById('f_desc').value.trim();
+    if(!description){ toast('Enter a description'); return; }
+    const {error} = await sb.from('order_tracking').insert({
+      description, sap_mn:document.getElementById('f_sap').value, manufacture_mn:document.getElementById('f_mmn').value,
+      quantity:parseFloat(document.getElementById('f_qty').value)||null, uom:document.getElementById('f_uom').value,
+      requested_by:document.getElementById('f_user').value, status:document.getElementById('f_status').value,
+      comments:document.getElementById('f_comments').value
+    });
+    if(error){ toast('Save failed'); console.error(error); return; }
+    closeSheet(); toast('Order added'); renderOrders();
+  };
+}
+
+if(!configured){ render(); } else { initAuth(); }
+</script>
+</body>
+</html>
