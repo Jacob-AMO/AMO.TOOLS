@@ -185,6 +185,10 @@
     display:flex; flex-direction:column; justify-content:center; padding:24px;
   }
   .login-box{max-width:360px; margin:0 auto; width:100%;}
+  .pw-wrap{position:relative;}
+  .pw-wrap input{padding-right:44px;}
+  .pw-toggle{position:absolute; right:4px; top:50%; transform:translateY(-50%);
+    background:none; border:none; color:var(--muted); font-size:18px; padding:8px; line-height:1;}
   .login-brand{text-align:center; margin-bottom:28px;}
   .login-brand h1{font-size:34px; text-transform:uppercase;}
   .login-brand small{display:block; font-family:'IBM Plex Mono',monospace; font-size:11px;
@@ -212,7 +216,9 @@
     </div>
     <div class="login-error" id="loginError"></div>
     <div class="field"><label>Email</label><input id="loginEmail" type="email" autocomplete="username" placeholder="you@company.com"></div>
-    <div class="field"><label>Password</label><input id="loginPassword" type="password" autocomplete="current-password" placeholder="••••••••"></div>
+    <div class="field"><label>Password</label>
+      <div class="pw-wrap"><input id="loginPassword" type="password" autocomplete="current-password" placeholder="••••••••">
+      <button type="button" class="pw-toggle" id="pwToggle">👁</button></div></div>
     <button id="btnLogin">Sign in</button>
     <div class="login-hint">No personal account? Ask your admin for the shared guest login.</div>
   </div>
@@ -221,8 +227,12 @@
 <header class="top" id="appHeader" style="display:none;">
   <div class="brand-row">
     <h1 class="brand">AMO Tools<small>OFFSHORE STOCK &amp; ASSET TRACKING</small></h1>
-    <button class="signout" id="btnLogout">Sign out</button>
+    <div style="display:flex; gap:6px; align-items:center;">
+      <button class="signout" id="btnActivity" style="display:none;">👥 Activity</button>
+      <button class="signout" id="btnLogout">Sign out</button>
+    </div>
   </div>
+  <div id="whoAmI" style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--muted); margin-top:8px;"></div>
   <div class="vessel-picker" id="vesselPicker"></div>
 </header>
 
@@ -304,17 +314,96 @@ function whoLabel(userId){
   if(!userId) return '—';
   return profileMap[userId] || 'Unknown user';
 }
+
+/* ---- Session tracking (who's logged in, when, for how long) ---- */
+let currentSessionId = null;
+let heartbeatTimer = null;
+async function startSessionTracking(){
+  if(currentSessionId) return; // already tracking this browser session
+  const {data, error} = await sb.from('login_sessions').insert({user_id: currentUserId}).select().single();
+  if(error){ console.error('session log failed', error); return; }
+  currentSessionId = data.id;
+  heartbeatTimer = setInterval(async ()=>{
+    if(!currentSessionId) return;
+    await sb.from('login_sessions').update({last_seen_at:new Date().toISOString()}).eq('id', currentSessionId);
+  }, 180000); // heartbeat every 3 minutes
+}
+async function endSessionTracking(){
+  if(heartbeatTimer){ clearInterval(heartbeatTimer); heartbeatTimer=null; }
+  if(currentSessionId){
+    await sb.from('login_sessions').update({logout_at:new Date().toISOString(), last_seen_at:new Date().toISOString()}).eq('id', currentSessionId);
+    currentSessionId = null;
+  }
+}
+function fmtDuration(ms){
+  if(ms<0) ms=0;
+  const mins = Math.round(ms/60000);
+  if(mins<1) return '<1m';
+  if(mins<60) return mins+'m';
+  const h = Math.floor(mins/60), m = mins%60;
+  return h+'h '+m+'m';
+}
+async function openActivityLog(){
+  openSheet(`<h3>Activity Log</h3><div id="actList" class="field"><div class="empty">Loading...</div></div>
+    <div class="sheet-actions"><button class="btn-cancel" id="cancel" style="flex:1;">Close</button></div>`);
+  document.getElementById('cancel').onclick = closeSheet;
+  const {data, error} = await sb.from('login_sessions').select('*')
+    .order('login_at', {ascending:false}).limit(80);
+  const box = document.getElementById('actList');
+  if(error){ box.innerHTML = 'Failed to load activity.'; console.error(error); return; }
+  if(!data.length){ box.innerHTML = '<div class="empty">No activity yet.</div>'; return; }
+
+  // Last seen summary per user
+  const lastByUser = {};
+  data.forEach(s=>{
+    const t = s.logout_at || s.last_seen_at || s.login_at;
+    if(!lastByUser[s.user_id] || new Date(t) > new Date(lastByUser[s.user_id].t)){
+      lastByUser[s.user_id] = {t, online: !s.logout_at && (Date.now()-new Date(s.last_seen_at).getTime()) < 5*60000};
+    }
+  });
+  const summaryHtml = Object.keys(lastByUser).map(uid=>{
+    const info = lastByUser[uid];
+    return `<div class="row-card" style="margin-bottom:8px;">
+      <div class="row-top"><div class="row-title">${whoLabel(uid)}</div>
+      ${info.online ? '<span class="badge received">🟢 Online</span>' : ''}</div>
+      <div class="row-meta">Last seen: ${new Date(info.t).toLocaleString()}</div>
+    </div>`;
+  }).join('');
+
+  const historyHtml = data.map(s=>{
+    const start = new Date(s.login_at);
+    const end = s.logout_at ? new Date(s.logout_at) : new Date(s.last_seen_at);
+    const dur = fmtDuration(end - start);
+    const stillOpen = !s.logout_at && (Date.now()-new Date(s.last_seen_at).getTime()) < 5*60000;
+    return `<div class="row-card" style="margin-bottom:8px;">
+      <div class="row-top"><div class="row-title">${whoLabel(s.user_id)}</div>
+      ${stillOpen ? '<span class="badge received">🟢</span>' : ''}</div>
+      <div class="row-meta">${start.toLocaleString()} · duration: ${dur}${stillOpen? ' (ongoing)':''}</div>
+    </div>`;
+  }).join('');
+
+  box.innerHTML = `<div class="section-title" style="margin-top:0;"><h2 style="font-size:15px;">Last seen — by user</h2></div>
+    ${summaryHtml}
+    <div class="section-title"><h2 style="font-size:15px;">Recent sessions</h2></div>
+    ${historyHtml}`;
+}
+
 async function initAuth(){
   if(!configured) return; // config banner in render() already covers this case
   document.getElementById('btnLogin').addEventListener('click', doLogin);
   document.getElementById('loginPassword').addEventListener('keydown', e=>{ if(e.key==='Enter') doLogin(); });
-  document.getElementById('btnLogout').addEventListener('click', async ()=>{ await sb.auth.signOut(); });
+  document.getElementById('pwToggle').addEventListener('click', ()=>{
+    const f = document.getElementById('loginPassword');
+    f.type = f.type==='password' ? 'text' : 'password';
+  });
+  document.getElementById('btnLogout').addEventListener('click', async ()=>{ await endSessionTracking(); await sb.auth.signOut(); });
+  document.getElementById('btnActivity').addEventListener('click', openActivityLog);
   sb.auth.onAuthStateChange(async (_event, session)=>{
-    if(session){ currentUserId=session.user.id; await checkAdmin(); await loadProfiles(); showApp(); render(); }
+    if(session){ currentUserId=session.user.id; await checkAdmin(); await loadProfiles(); await startSessionTracking(); showApp(); render(); }
     else { isAdmin=false; isGuest=false; currentUserId=null; showLogin(); }
   });
   const {data:{session}} = await sb.auth.getSession();
-  if(session){ currentUserId=session.user.id; await checkAdmin(); await loadProfiles(); showApp(); render(); } else { showLogin(); }
+  if(session){ currentUserId=session.user.id; await checkAdmin(); await loadProfiles(); await startSessionTracking(); showApp(); render(); } else { showLogin(); }
 }
 
 /* ============================================================
@@ -398,6 +487,9 @@ async function render(){
     b.classList.toggle('active', b.dataset.v===state.vessel));
   document.getElementById('vesselPicker').style.display = state.tab==='stock' ? 'flex' : 'none';
   document.getElementById('fab').style.display = (state.tab==='crew' && !isAdmin) ? 'none' : (isGuest ? 'none' : 'flex');
+  document.getElementById('btnActivity').style.display = isAdmin ? 'inline-block' : 'none';
+  const roleLabel = isAdmin ? 'Team Leader' : (isGuest ? 'Guest (view only)' : 'Employee');
+  document.getElementById('whoAmI').textContent = `👤 Signed in as: ${whoLabel(currentUserId)}`;
 
   if(!configured){
     document.getElementById('loginScreen').style.display='none';
