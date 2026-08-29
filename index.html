@@ -282,16 +282,53 @@ function showApp(){
   document.getElementById('fab').style.display='flex';
   document.getElementById('bottomNav').style.display='flex';
 }
+/* ---- Login lockout after repeated failed attempts ---- */
+const LOCKOUT_KEY = 'amo_login_attempts';
+const MAX_ATTEMPTS = 3;
+const LOCKOUT_MINUTES = 5;
+function getLockoutState(){
+  try{ return JSON.parse(localStorage.getItem(LOCKOUT_KEY)) || {count:0, lockUntil:0}; }
+  catch(e){ return {count:0, lockUntil:0}; }
+}
+function setLockoutState(s){
+  try{ localStorage.setItem(LOCKOUT_KEY, JSON.stringify(s)); }catch(e){}
+}
+function recordFailedLogin(){
+  const s = getLockoutState();
+  s.count = (s.count||0) + 1;
+  if(s.count >= MAX_ATTEMPTS){ s.lockUntil = Date.now() + LOCKOUT_MINUTES*60000; s.count = 0; }
+  setLockoutState(s);
+}
+function clearLockout(){ setLockoutState({count:0, lockUntil:0}); }
+function lockoutMinutesLeft(){
+  const s = getLockoutState();
+  if(!s.lockUntil || s.lockUntil <= Date.now()) return 0;
+  return Math.ceil((s.lockUntil - Date.now())/60000);
+}
 async function doLogin(){
   const email = document.getElementById('loginEmail').value.trim();
   const password = document.getElementById('loginPassword').value;
   const btn = document.getElementById('btnLogin');
   $loginError.classList.remove('show');
+  const minsLeft = lockoutMinutesLeft();
+  if(minsLeft > 0){
+    $loginError.textContent = `Too many failed attempts. Try again in ${minsLeft} minute${minsLeft>1?'s':''}.`;
+    $loginError.classList.add('show'); return;
+  }
   if(!email || !password){ $loginError.textContent='Enter email and password.'; $loginError.classList.add('show'); return; }
   btn.disabled = true; btn.textContent = 'Signing in...';
   const {error} = await sb.auth.signInWithPassword({email, password});
   btn.disabled = false; btn.textContent = 'Sign in';
-  if(error){ $loginError.textContent = 'Incorrect email or password.'; $loginError.classList.add('show'); }
+  if(error){
+    recordFailedLogin();
+    const nowLocked = lockoutMinutesLeft();
+    $loginError.textContent = nowLocked > 0
+      ? `Too many failed attempts. Try again in ${nowLocked} minute${nowLocked>1?'s':''}.`
+      : 'Incorrect email or password.';
+    $loginError.classList.add('show');
+  } else {
+    clearLockout();
+  }
 }
 async function checkAdmin(){
   const {data} = await sb.from('admins').select('user_id');
@@ -310,9 +347,14 @@ async function loadProfiles(){
   myRole = (mine && mine.role) || 'employee';
   isGuest = myRole === 'guest';
 }
+function esc(v){
+  if(v===null || v===undefined) return '';
+  return String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
 function whoLabel(userId){
   if(!userId) return '—';
-  return profileMap[userId] || 'Unknown user';
+  return esc(profileMap[userId] || 'Unknown user');
 }
 
 /* ---- Session tracking (who's logged in, when, for how long) ---- */
@@ -335,6 +377,26 @@ async function endSessionTracking(){
     currentSessionId = null;
   }
 }
+
+/* ---- Auto sign-out after 15 minutes of inactivity ---- */
+const INACTIVITY_LIMIT_MS = 15*60000;
+let inactivityTimer = null;
+function resetInactivityTimer(){
+  if(!currentUserId) return; // not logged in, nothing to do
+  if(inactivityTimer) clearTimeout(inactivityTimer);
+  inactivityTimer = setTimeout(async ()=>{
+    await endSessionTracking();
+    await sb.auth.signOut();
+    $loginError.textContent = 'Signed out after 15 minutes of inactivity.';
+    $loginError.classList.add('show');
+  }, INACTIVITY_LIMIT_MS);
+}
+function stopInactivityTimer(){
+  if(inactivityTimer){ clearTimeout(inactivityTimer); inactivityTimer=null; }
+}
+['click','keydown','touchstart','mousemove','scroll'].forEach(evt=>
+  window.addEventListener(evt, ()=>{ if(currentUserId) resetInactivityTimer(); }, {passive:true}));
+
 function fmtDuration(ms){
   if(ms<0) ms=0;
   const mins = Math.round(ms/60000);
@@ -396,14 +458,14 @@ async function initAuth(){
     const f = document.getElementById('loginPassword');
     f.type = f.type==='password' ? 'text' : 'password';
   });
-  document.getElementById('btnLogout').addEventListener('click', async ()=>{ await endSessionTracking(); await sb.auth.signOut(); });
+  document.getElementById('btnLogout').addEventListener('click', async ()=>{ stopInactivityTimer(); await endSessionTracking(); await sb.auth.signOut(); });
   document.getElementById('btnActivity').addEventListener('click', openActivityLog);
   sb.auth.onAuthStateChange(async (_event, session)=>{
-    if(session){ currentUserId=session.user.id; await checkAdmin(); await loadProfiles(); await startSessionTracking(); showApp(); render(); }
-    else { isAdmin=false; isGuest=false; currentUserId=null; showLogin(); }
+    if(session){ currentUserId=session.user.id; await checkAdmin(); await loadProfiles(); await startSessionTracking(); resetInactivityTimer(); showApp(); render(); }
+    else { isAdmin=false; isGuest=false; currentUserId=null; stopInactivityTimer(); showLogin(); }
   });
   const {data:{session}} = await sb.auth.getSession();
-  if(session){ currentUserId=session.user.id; await checkAdmin(); await loadProfiles(); await startSessionTracking(); showApp(); render(); } else { showLogin(); }
+  if(session){ currentUserId=session.user.id; await checkAdmin(); await loadProfiles(); await startSessionTracking(); resetInactivityTimer(); showApp(); render(); } else { showLogin(); }
 }
 
 /* ============================================================
@@ -489,7 +551,7 @@ async function render(){
   document.getElementById('fab').style.display = (state.tab==='crew' && !isAdmin) ? 'none' : (isGuest ? 'none' : 'flex');
   document.getElementById('btnActivity').style.display = isAdmin ? 'inline-block' : 'none';
   const roleLabel = isAdmin ? 'Team Leader' : (isGuest ? 'Guest (view only)' : 'Employee');
-  document.getElementById('whoAmI').textContent = `👤 Signed in as: ${whoLabel(currentUserId)}`;
+  document.getElementById('whoAmI').textContent = `👤 Signed in as: ${whoLabel(currentUserId)} · ${roleLabel}`;
 
   if(!configured){
     document.getElementById('loginScreen').style.display='none';
@@ -544,14 +606,14 @@ function filterAndPaintStock(){
     const statusBadge = isZero ? '<span class="badge pending" style="background:#4a2a22;color:var(--rust);">OUT OF STOCK</span>'
       : (isLow ? '<span class="badge pending">LOW STOCK</span>' : '');
     const minLine = i.low_stock_threshold ? ` · min ${fmtNum(i.low_stock_threshold)} ${i.unit}` : '';
-    const notesLine = i.notes ? `<div class="item-sub" style="margin-top:4px;font-style:italic;">📝 ${i.notes}</div>` : '';
+    const notesLine = i.notes ? `<div class="item-sub" style="margin-top:4px;font-style:italic;">📝 ${esc(i.notes)}</div>` : '';
     const actionButtons = isGuest ? '' : `
-        <button class="use" data-id="${i.item_id}" data-name="${i.name}" data-unit="${i.unit}" data-mode="use">− Use</button>
-        <button class="fill" data-id="${i.item_id}" data-name="${i.name}" data-unit="${i.unit}" data-mode="fill">+ Refill</button>`;
-    const minButton = isGuest ? '' : `<button class="setmin" data-id="${i.item_id}" data-name="${i.name}" data-unit="${i.unit}" data-min="${i.low_stock_threshold||0}" data-notes="${(i.notes||'').replace(/"/g,'&quot;')}" style="flex:.6;">⚙ Info</button>`;
+        <button class="use" data-id="${i.item_id}" data-name="${esc(i.name)}" data-unit="${esc(i.unit)}" data-mode="use">− Use</button>
+        <button class="fill" data-id="${i.item_id}" data-name="${esc(i.name)}" data-unit="${esc(i.unit)}" data-mode="fill">+ Refill</button>`;
+    const minButton = isGuest ? '' : `<button class="setmin" data-id="${i.item_id}" data-name="${esc(i.name)}" data-unit="${esc(i.unit)}" data-min="${i.low_stock_threshold||0}" data-notes="${esc(i.notes)}" style="flex:.6;">⚙ Info</button>`;
     return `<div class="item-card">
       <div class="item-top">
-        <div><div class="item-name">${i.name}</div><div class="item-sub">${i.vessel} · ${i.category}${minLine}</div>${notesLine}</div>
+        <div><div class="item-name">${esc(i.name)}</div><div class="item-sub">${esc(i.vessel)} · ${esc(i.category)}${minLine}</div>${notesLine}</div>
         <div style="text-align:right;">
           <div class="item-qty">${fmtNum(i.current_qty)} <span>${i.unit}</span></div>
           ${statusBadge}
@@ -559,7 +621,7 @@ function filterAndPaintStock(){
       </div>
       <div class="gauge ${gclass}"><i style="width:${pct}%"></i></div>
       <div class="item-actions">${actionButtons}
-        <button class="hist" data-id="${i.item_id}" data-name="${i.name}" data-unit="${i.unit}" style="flex:.7;">📜 Log</button>
+        <button class="hist" data-id="${i.item_id}" data-name="${esc(i.name)}" data-unit="${esc(i.unit)}" style="flex:.7;">📜 Log</button>
         ${minButton}
       </div>
     </div>`;
@@ -589,9 +651,9 @@ function paintBattery(){
   if(!items.length){ list.innerHTML = `<div class="empty"><b>Empty</b>List is empty.</div>`; return; }
   list.innerHTML = items.map(i=>`<div class="row-card" data-id="${i.id}" style="${isGuest?'':'cursor:pointer;'}">
       <div class="row-top">
-        <div><div class="row-title">${i.asset}</div>
-          <div class="row-meta mono">${i.battery_data||'—'}</div>
-          <div class="row-meta">Qty: <b>${i.qty ?? '—'}</b> · Changed: ${i.changed_date||'—'}${i.comments? ' · '+i.comments:''}</div>
+        <div><div class="row-title">${esc(i.asset)}</div>
+          <div class="row-meta mono">${esc(i.battery_data)||'—'}</div>
+          <div class="row-meta">Qty: <b>${i.qty ?? '—'}</b> · Changed: ${i.changed_date||'—'}${i.comments? ' · '+esc(i.comments):''}</div>
           <div class="row-meta">Logged by: ${whoLabel(i.created_by)}</div>
         </div>
         ${isGuest?'':'<span style="color:var(--muted);font-size:16px;">✎</span>'}
@@ -622,11 +684,11 @@ async function renderCrew(){
     rows.forEach(r=>{ (byTeam[r.team]=byTeam[r.team]||[]).push(r); });
     return `<div class="crew-date">${date}</div>` + Object.keys(byTeam).map(team=>`
       <div class="row-card">
-        <div class="crew-team">${team}</div>
+        <div class="crew-team">${esc(team)}</div>
         ${byTeam[team].map(r=>`<div class="row-meta" data-id="${r.id}" style="margin-bottom:4px;${isAdmin?'cursor:pointer;':''}">
-          <b style="color:var(--text)">${r.position||''} ${r.seq_no??''}</b> —
-          off: ${r.off_employee||'—'} · on: ${r.on_employee||'—'}
-          ${r.destination? ' · '+r.destination:''}${r.note? ' · '+r.note:''}
+          <b style="color:var(--text)">${esc(r.position)||''} ${r.seq_no??''}</b> —
+          off: ${esc(r.off_employee)||'—'} · on: ${esc(r.on_employee)||'—'}
+          ${r.destination? ' · '+esc(r.destination):''}${r.note? ' · '+esc(r.note):''}
           <br><span style="opacity:.8;">${r.shift_date}${r.shift_end_date? ' → '+r.shift_end_date : ' (no end date set)'}</span>
           <span style="opacity:.7;"> · set by ${whoLabel(r.created_by)}</span>
           ${isAdmin?' <span style="color:var(--muted);">✎</span>':''}
@@ -658,9 +720,9 @@ function paintOrders(){
   if(!items.length){ list.innerHTML = `<div class="empty"><b>Empty</b>No orders yet.</div>`; return; }
   list.innerHTML = items.map(i=>`<div class="row-card" data-id="${i.id}" style="${isGuest?'':'cursor:pointer;'}">
       <div class="row-top">
-        <div><div class="row-title">${i.description}</div>
-          <div class="row-meta mono">${i.sap_mn?('SAP '+i.sap_mn+' · '):''}${i.manufacture_mn||''}</div>
-          <div class="row-meta">Qty: <b>${i.quantity ?? '—'} ${i.uom||''}</b> · Requested by: ${i.requested_by||'—'}${i.comments? ' · '+i.comments:''}</div>
+        <div><div class="row-title">${esc(i.description)}</div>
+          <div class="row-meta mono">${i.sap_mn?('SAP '+esc(i.sap_mn)+' · '):''}${esc(i.manufacture_mn)||''}</div>
+          <div class="row-meta">Qty: <b>${i.quantity ?? '—'} ${esc(i.uom)||''}</b> · Requested by: ${esc(i.requested_by)||'—'}${i.comments? ' · '+esc(i.comments):''}</div>
           <div class="row-meta">Logged by: ${whoLabel(i.created_by)}</div>
         </div>
         <div style="text-align:right;">
@@ -745,11 +807,11 @@ function openStockTxnForm(itemId, name, unit, mode){
   };
 }
 function openStockMinForm(itemId, name, unit, currentMin, currentNotes){
-  openSheet(`<h3>${name} — Item Info</h3>
-    <div class="field"><label>Minimum / reorder level (${unit})</label>
+  openSheet(`<h3>${esc(name)} — Item Info</h3>
+    <div class="field"><label>Minimum / reorder level (${esc(unit)})</label>
       <input id="f_min" type="number" step="any" value="${currentMin||0}"></div>
     <div class="field"><label>Comments (equipment it's used on, analog part numbers, etc.)</label>
-      <textarea id="f_notes" placeholder="e.g. Used on Power Pack CT-1; analog: Fleetguard LF691">${currentNotes||''}</textarea></div>
+      <textarea id="f_notes" placeholder="e.g. Used on Power Pack CT-1; analog: Fleetguard LF691">${esc(currentNotes)}</textarea></div>
     <div class="login-hint" style="text-align:left;margin-top:0;">When stock falls to or below the minimum, it's flagged as LOW STOCK on the list. Set to 0 to turn off the warning.</div>
     <div class="sheet-actions"><button class="btn-cancel" id="cancel">Cancel</button>
       <button class="btn-save" id="save">Save</button></div>`);
@@ -763,7 +825,7 @@ function openStockMinForm(itemId, name, unit, currentMin, currentNotes){
   };
 }
 async function openStockHistory(itemId, name, unit){
-  openSheet(`<h3>${name} — Usage Log</h3><div id="histList" class="field"><div class="empty">Loading...</div></div>
+  openSheet(`<h3>${esc(name)} — Usage Log</h3><div id="histList" class="field"><div class="empty">Loading...</div></div>
     <div class="sheet-actions"><button class="btn-cancel" id="cancel" style="flex:1;">Close</button></div>`);
   document.getElementById('cancel').onclick = closeSheet;
   const {data, error} = await sb.from('stock_transactions').select('*')
@@ -778,8 +840,8 @@ async function openStockHistory(itemId, name, unit){
       <div class="row-top">
         <div>
           <div class="row-title" style="color:${color};">${sign}${fmtNum(t.quantity)} ${unit}</div>
-          <div class="row-meta">${t.txn_date||'—'} · ${t.reason||'No reason given'}</div>
-          <div class="row-meta">${t.equipment? 'Equipment: '+t.equipment+' · ':''}${t.tech? 'Tech: '+t.tech+' · ':''}By: ${whoLabel(t.created_by)}</div>
+          <div class="row-meta">${t.txn_date||'—'} · ${esc(t.reason)||'No reason given'}</div>
+          <div class="row-meta">${t.equipment? 'Equipment: '+esc(t.equipment)+' · ':''}${t.tech? 'Tech: '+esc(t.tech)+' · ':''}By: ${whoLabel(t.created_by)}</div>
         </div>
       </div></div>`;
   }).join('');
@@ -787,11 +849,11 @@ async function openStockHistory(itemId, name, unit){
 function openBatteryForm(existing){
   const isEdit = !!existing;
   openSheet(`<h3>${isEdit ? 'Update Battery' : 'New Battery'}</h3>
-    <div class="field"><label>Asset</label><input id="f_asset" placeholder="e.g. Power Pack PPJ81515" value="${isEdit?(existing.asset||'').replace(/"/g,'&quot;'):''}"></div>
-    <div class="field"><label>Battery data</label><input id="f_data" placeholder="12V, 62A/h, 540A, Yuasa" value="${isEdit?(existing.battery_data||'').replace(/"/g,'&quot;'):''}"></div>
+    <div class="field"><label>Asset</label><input id="f_asset" placeholder="e.g. Power Pack PPJ81515" value="${isEdit?esc(existing.asset):''}"></div>
+    <div class="field"><label>Battery data</label><input id="f_data" placeholder="12V, 62A/h, 540A, Yuasa" value="${isEdit?esc(existing.battery_data):''}"></div>
     <div class="field"><label>Qty</label><input id="f_qty" type="number" value="${isEdit?(existing.qty??1):1}"></div>
     <div class="field"><label>Changed date</label><input id="f_date" type="date" value="${isEdit?(existing.changed_date||''):''}"></div>
-    <div class="field"><label>Comments</label><input id="f_comments" value="${isEdit?(existing.comments||'').replace(/"/g,'&quot;'):''}"></div>
+    <div class="field"><label>Comments</label><input id="f_comments" value="${isEdit?esc(existing.comments):''}"></div>
     <div class="sheet-actions">
       ${isEdit ? '<button class="btn-cancel" id="del" style="color:var(--rust);border-color:#4a2a22 !important;">Delete</button>' : '<button class="btn-cancel" id="cancel">Cancel</button>'}
       <button class="btn-save" id="save">${isEdit ? 'Save changes' : 'Add'}</button></div>
@@ -829,7 +891,6 @@ function openBatteryForm(existing){
 }
 function openCrewForm(existing){
   const isEdit = !!existing;
-  const esc = v => (v||'').toString().replace(/"/g,'&quot;');
   openSheet(`<h3>${isEdit?'Update Crew Entry':'New Crew Change Entry'}</h3>
     <div class="field"><label>Watch start date</label><input id="f_date" type="date" value="${isEdit?existing.shift_date:new Date().toISOString().slice(0,10)}"></div>
     <div class="field"><label>Watch end date (optional)</label><input id="f_end" type="date" value="${isEdit?(existing.shift_end_date||''):''}"></div>
@@ -874,7 +935,6 @@ function openCrewForm(existing){
 }
 function openOrderForm(existing){
   const isEdit = !!existing;
-  const esc = v => (v||'').toString().replace(/"/g,'&quot;');
   openSheet(`<h3>${isEdit?'Update Order':'New Order'}</h3>
     <div class="field"><label>Description</label><input id="f_desc" placeholder="e.g. Breakout Box" value="${isEdit?esc(existing.description):''}"></div>
     <div class="field"><label>SAP MN</label><input id="f_sap" value="${isEdit?esc(existing.sap_mn):''}"></div>
