@@ -551,7 +551,7 @@ async function render(){
   document.getElementById('fab').style.display = (state.tab==='crew' && !isAdmin) ? 'none' : (isGuest ? 'none' : 'flex');
   document.getElementById('btnActivity').style.display = isAdmin ? 'inline-block' : 'none';
   const roleLabel = isAdmin ? 'Team Leader' : (isGuest ? 'Guest (view only)' : 'Employee');
-  document.getElementById('whoAmI').textContent = `👤 Signed in as: ${whoLabel(currentUserId)} · ${roleLabel}`;
+  document.getElementById('whoAmI').textContent = `👤 Signed in as: ${whoLabel(currentUserId)}`;
 
   if(!configured){
     document.getElementById('loginScreen').style.display='none';
