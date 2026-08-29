@@ -244,8 +244,8 @@
 /* ============================================================
    1) CONFIG — enter your Supabase credentials (Project Settings -> API)
    ============================================================ */
-const SUPABASE_URL = 'https://tvaicxwcsybakvnkumzx.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR2YWljeHdjc3liYWt2bmt1bXp4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc4NDAwNzYsImV4cCI6MjEwMzQxNjA3Nn0.-WyAx-_od2U4l-rfLMJSndmVbnzOX6w5c4mifcopeH4';
+const SUPABASE_URL = 'https://xgiccxycszgofpvrahuu.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhnaWNjeHljc3pnb2ZwdnJhaHV1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc5NjAxMjksImV4cCI6MjEwMzUzNjEyOX0.wayH2lNsl3pe4JNEIgbDTUds_PAXtP7hBXy20xD5Xpk';
 
 const configured = !SUPABASE_URL.startsWith('YOUR_') && !SUPABASE_ANON_KEY.startsWith('YOUR_');
 const sb = configured ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
@@ -288,11 +288,17 @@ async function checkAdmin(){
   isAdmin = !!(data && data.length);
 }
 let profileMap = {}; // user_id -> display label
+let currentUserId = null;
+let myRole = 'employee';
+let isGuest = false;
 async function loadProfiles(){
-  const {data, error} = await sb.from('profiles').select('id, email, display_name');
+  const {data, error} = await sb.from('profiles').select('id, email, display_name, role');
   if(error){ console.error(error); return; }
   profileMap = {};
   (data||[]).forEach(p=>{ profileMap[p.id] = p.display_name || p.email || p.id; });
+  const mine = (data||[]).find(p=>p.id===currentUserId);
+  myRole = (mine && mine.role) || 'employee';
+  isGuest = myRole === 'guest';
 }
 function whoLabel(userId){
   if(!userId) return '—';
@@ -304,10 +310,11 @@ async function initAuth(){
   document.getElementById('loginPassword').addEventListener('keydown', e=>{ if(e.key==='Enter') doLogin(); });
   document.getElementById('btnLogout').addEventListener('click', async ()=>{ await sb.auth.signOut(); });
   sb.auth.onAuthStateChange(async (_event, session)=>{
-    if(session){ await checkAdmin(); await loadProfiles(); showApp(); render(); } else { isAdmin=false; showLogin(); }
+    if(session){ currentUserId=session.user.id; await checkAdmin(); await loadProfiles(); showApp(); render(); }
+    else { isAdmin=false; isGuest=false; currentUserId=null; showLogin(); }
   });
   const {data:{session}} = await sb.auth.getSession();
-  if(session){ await checkAdmin(); await loadProfiles(); showApp(); render(); } else { showLogin(); }
+  if(session){ currentUserId=session.user.id; await checkAdmin(); await loadProfiles(); showApp(); render(); } else { showLogin(); }
 }
 
 /* ============================================================
@@ -345,6 +352,7 @@ document.getElementById('bottomNav').addEventListener('click', e=>{
   state.tab = b.dataset.tab; state.search=''; render();
 });
 document.getElementById('fab').addEventListener('click', ()=>{
+  if(isGuest){ toast('Guests have view-only access'); return; }
   if(state.tab==='stock') openStockForm();
   if(state.tab==='battery') openBatteryForm();
   if(state.tab==='crew'){
@@ -389,7 +397,7 @@ async function render(){
   document.querySelectorAll('#vesselPicker button').forEach(b=>
     b.classList.toggle('active', b.dataset.v===state.vessel));
   document.getElementById('vesselPicker').style.display = state.tab==='stock' ? 'flex' : 'none';
-  document.getElementById('fab').style.display = (state.tab==='crew' && !isAdmin) ? 'none' : 'flex';
+  document.getElementById('fab').style.display = (state.tab==='crew' && !isAdmin) ? 'none' : (isGuest ? 'none' : 'flex');
 
   if(!configured){
     document.getElementById('loginScreen').style.display='none';
@@ -415,6 +423,7 @@ async function renderStock(){
       <button data-c="oil" class="${state.stockCat==='oil'?'active':''}">Oil</button>
       <button data-c="filter" class="${state.stockCat==='filter'?'active':''}">Filters</button>
     </div>
+    ${isGuest ? '<div class="config-banner" style="background:#182a30;border-color:#2a4550;color:var(--muted);">👁 View only.</div>' : ''}
     <div class="searchbar"><span>🔎</span><input id="q" placeholder="Search by name..." value="${state.search}"></div>
     <div class="section-title"><h2>${state.vessel} Offshore Stock · ${state.stockCat==='oil'?'Oil':'Filters'}</h2>
       <span class="count" id="cnt"></span></div>
@@ -433,21 +442,33 @@ function filterAndPaintStock(){
     i.name.toLowerCase().includes(state.search.toLowerCase()));
   document.getElementById('cnt').textContent = items.length + ' items';
   const list = document.getElementById('list');
-  if(!items.length){ list.innerHTML = `<div class="empty"><b>Empty</b>Nothing found. Add an item with the "+" button.</div>`; return; }
+  if(!items.length){ list.innerHTML = `<div class="empty"><b>Empty</b>Nothing found.${isGuest?'':' Add an item with the "+" button.'}</div>`; return; }
   const maxQty = Math.max(...items.map(i=>Math.max(i.current_qty, i.low_stock_threshold||0, 1)));
   list.innerHTML = items.map(i=>{
     const pct = Math.max(0, Math.min(100, (i.current_qty/maxQty)*100));
-    const gclass = i.current_qty<=0 ? 'zero' : (i.low_stock_threshold && i.current_qty<=i.low_stock_threshold ? 'low' : '');
+    const isZero = i.current_qty<=0;
+    const isLow = !isZero && i.low_stock_threshold && i.current_qty<=i.low_stock_threshold;
+    const gclass = isZero ? 'zero' : (isLow ? 'low' : '');
+    const statusBadge = isZero ? '<span class="badge pending" style="background:#4a2a22;color:var(--rust);">OUT OF STOCK</span>'
+      : (isLow ? '<span class="badge pending">LOW STOCK</span>' : '');
+    const minLine = i.low_stock_threshold ? ` · min ${fmtNum(i.low_stock_threshold)} ${i.unit}` : '';
+    const notesLine = i.notes ? `<div class="item-sub" style="margin-top:4px;font-style:italic;">📝 ${i.notes}</div>` : '';
+    const actionButtons = isGuest ? '' : `
+        <button class="use" data-id="${i.item_id}" data-name="${i.name}" data-unit="${i.unit}" data-mode="use">− Use</button>
+        <button class="fill" data-id="${i.item_id}" data-name="${i.name}" data-unit="${i.unit}" data-mode="fill">+ Refill</button>`;
+    const minButton = isGuest ? '' : `<button class="setmin" data-id="${i.item_id}" data-name="${i.name}" data-unit="${i.unit}" data-min="${i.low_stock_threshold||0}" data-notes="${(i.notes||'').replace(/"/g,'&quot;')}" style="flex:.6;">⚙ Info</button>`;
     return `<div class="item-card">
       <div class="item-top">
-        <div><div class="item-name">${i.name}</div><div class="item-sub">${i.vessel} · ${i.category}</div></div>
-        <div class="item-qty">${fmtNum(i.current_qty)} <span>${i.unit}</span></div>
+        <div><div class="item-name">${i.name}</div><div class="item-sub">${i.vessel} · ${i.category}${minLine}</div>${notesLine}</div>
+        <div style="text-align:right;">
+          <div class="item-qty">${fmtNum(i.current_qty)} <span>${i.unit}</span></div>
+          ${statusBadge}
+        </div>
       </div>
       <div class="gauge ${gclass}"><i style="width:${pct}%"></i></div>
-      <div class="item-actions">
-        <button class="use" data-id="${i.item_id}" data-name="${i.name}" data-unit="${i.unit}" data-mode="use">− Use</button>
-        <button class="fill" data-id="${i.item_id}" data-name="${i.name}" data-unit="${i.unit}" data-mode="fill">+ Refill</button>
+      <div class="item-actions">${actionButtons}
         <button class="hist" data-id="${i.item_id}" data-name="${i.name}" data-unit="${i.unit}" style="flex:.7;">📜 Log</button>
+        ${minButton}
       </div>
     </div>`;
   }).join('');
@@ -455,12 +476,15 @@ function filterAndPaintStock(){
     b.addEventListener('click', ()=>openStockTxnForm(b.dataset.id, b.dataset.name, b.dataset.unit, b.dataset.mode)));
   list.querySelectorAll('.item-actions .hist').forEach(b=>
     b.addEventListener('click', ()=>openStockHistory(b.dataset.id, b.dataset.name, b.dataset.unit)));
+  list.querySelectorAll('.item-actions .setmin').forEach(b=>
+    b.addEventListener('click', ()=>openStockMinForm(b.dataset.id, b.dataset.name, b.dataset.unit, b.dataset.min, b.dataset.notes)));
 }
 function fmtNum(n){ return Number(n).toLocaleString('ru-RU', {maximumFractionDigits:2}); }
 
 async function renderBattery(){
   $main.innerHTML = `<div class="searchbar"><span>🔎</span><input id="q" placeholder="Search by asset..." value="${state.search}"></div>
     <div class="section-title"><h2>Batteries</h2><span class="count" id="cnt"></span></div>
+    ${isGuest ? '<div class="config-banner" style="background:#182a30;border-color:#2a4550;color:var(--muted);">👁 View only.</div>' : '<div class="login-hint" style="text-align:left;margin:-4px 0 4px;">Tap a battery to update it after a swap.</div>'}
     <div id="list"><div class="empty">Loading...</div></div>`;
   $main.querySelector('#q').addEventListener('input', e=>{ state.search=e.target.value; paintBattery(); });
   state.data.battery = await fetchBattery();
@@ -471,19 +495,27 @@ function paintBattery(){
   document.getElementById('cnt').textContent = items.length + ' items';
   const list = document.getElementById('list');
   if(!items.length){ list.innerHTML = `<div class="empty"><b>Empty</b>List is empty.</div>`; return; }
-  list.innerHTML = items.map(i=>`<div class="row-card">
+  list.innerHTML = items.map(i=>`<div class="row-card" data-id="${i.id}" style="${isGuest?'':'cursor:pointer;'}">
       <div class="row-top">
         <div><div class="row-title">${i.asset}</div>
           <div class="row-meta mono">${i.battery_data||'—'}</div>
           <div class="row-meta">Qty: <b>${i.qty ?? '—'}</b> · Changed: ${i.changed_date||'—'}${i.comments? ' · '+i.comments:''}</div>
           <div class="row-meta">Logged by: ${whoLabel(i.created_by)}</div>
         </div>
+        ${isGuest?'':'<span style="color:var(--muted);font-size:16px;">✎</span>'}
       </div></div>`).join('');
+  if(!isGuest){
+    list.querySelectorAll('.row-card').forEach(card=>
+      card.addEventListener('click', ()=>{
+        const rec = items.find(i=>String(i.id)===card.dataset.id);
+        if(rec) openBatteryForm(rec);
+      }));
+  }
 }
 
 async function renderCrew(){
   $main.innerHTML = `<div class="section-title"><h2>Crew Change Plan</h2><span class="count" id="cnt"></span></div>
-    ${!isAdmin ? '<div class="config-banner" style="background:#182a30;border-color:#2a4550;color:var(--muted);">👁 View only — ask your team leader for changes.</div>' : ''}
+    ${!isAdmin ? '<div class="config-banner" style="background:#182a30;border-color:#2a4550;color:var(--muted);">👁 View only — ask your team leader for changes.</div>' : '<div class="login-hint" style="text-align:left;margin:-4px 0 4px;">Tap a row to edit it.</div>'}
     <div id="list"><div class="empty">Loading...</div></div>`;
   state.data.crew = await fetchCrew();
   const items = state.data.crew||[];
@@ -499,19 +531,29 @@ async function renderCrew(){
     return `<div class="crew-date">${date}</div>` + Object.keys(byTeam).map(team=>`
       <div class="row-card">
         <div class="crew-team">${team}</div>
-        ${byTeam[team].map(r=>`<div class="row-meta" style="margin-bottom:4px;">
+        ${byTeam[team].map(r=>`<div class="row-meta" data-id="${r.id}" style="margin-bottom:4px;${isAdmin?'cursor:pointer;':''}">
           <b style="color:var(--text)">${r.position||''} ${r.seq_no??''}</b> —
           off: ${r.off_employee||'—'} · on: ${r.on_employee||'—'}
           ${r.destination? ' · '+r.destination:''}${r.note? ' · '+r.note:''}
+          <br><span style="opacity:.8;">${r.shift_date}${r.shift_end_date? ' → '+r.shift_end_date : ' (no end date set)'}</span>
           <span style="opacity:.7;"> · set by ${whoLabel(r.created_by)}</span>
+          ${isAdmin?' <span style="color:var(--muted);">✎</span>':''}
         </div>`).join('')}
       </div>`).join('');
   }).join('');
+  if(isAdmin){
+    list.querySelectorAll('.row-meta[data-id]').forEach(el=>
+      el.addEventListener('click', ()=>{
+        const rec = items.find(i=>String(i.id)===el.dataset.id);
+        if(rec) openCrewForm(rec);
+      }));
+  }
 }
 
 async function renderOrders(){
   $main.innerHTML = `<div class="searchbar"><span>🔎</span><input id="q" placeholder="Search by description..." value="${state.search}"></div>
     <div class="section-title"><h2>Orders</h2><span class="count" id="cnt"></span></div>
+    ${isGuest ? '<div class="config-banner" style="background:#182a30;border-color:#2a4550;color:var(--muted);">👁 View only.</div>' : '<div class="login-hint" style="text-align:left;margin:-4px 0 4px;">Tap an order to update status or remove it.</div>'}
     <div id="list"><div class="empty">Loading...</div></div>`;
   $main.querySelector('#q').addEventListener('input', e=>{ state.search=e.target.value; paintOrders(); });
   state.data.orders = await fetchOrders();
@@ -522,15 +564,25 @@ function paintOrders(){
   document.getElementById('cnt').textContent = items.length + ' records';
   const list = document.getElementById('list');
   if(!items.length){ list.innerHTML = `<div class="empty"><b>Empty</b>No orders yet.</div>`; return; }
-  list.innerHTML = items.map(i=>`<div class="row-card">
+  list.innerHTML = items.map(i=>`<div class="row-card" data-id="${i.id}" style="${isGuest?'':'cursor:pointer;'}">
       <div class="row-top">
         <div><div class="row-title">${i.description}</div>
           <div class="row-meta mono">${i.sap_mn?('SAP '+i.sap_mn+' · '):''}${i.manufacture_mn||''}</div>
           <div class="row-meta">Qty: <b>${i.quantity ?? '—'} ${i.uom||''}</b> · Requested by: ${i.requested_by||'—'}${i.comments? ' · '+i.comments:''}</div>
           <div class="row-meta">Logged by: ${whoLabel(i.created_by)}</div>
         </div>
-        <span class="badge ${i.status}">${statusLabel(i.status)}</span>
+        <div style="text-align:right;">
+          <span class="badge ${i.status}">${statusLabel(i.status)}</span>
+          ${isGuest?'':'<div style="color:var(--muted);font-size:16px;margin-top:6px;">✎</div>'}
+        </div>
       </div></div>`).join('');
+  if(!isGuest){
+    list.querySelectorAll('.row-card').forEach(card=>
+      card.addEventListener('click', ()=>{
+        const rec = items.find(i=>String(i.id)===card.dataset.id);
+        if(rec) openOrderForm(rec);
+      }));
+  }
 }
 function statusLabel(s){ return {pending:'Pending', ordered:'Ordered', received:'Received'}[s] || s; }
 
@@ -547,6 +599,8 @@ function openStockForm(){
     <div class="field"><label>Name / part number</label><input id="f_name" placeholder="e.g. LF691 or Engine Oil 15w40"></div>
     <div class="field"><label>Unit</label><input id="f_unit" placeholder="ea or lit" value="${state.stockCat==='oil'?'lit':'ea'}"></div>
     <div class="field"><label>Initial quantity</label><input id="f_qty" type="number" step="any" value="0"></div>
+    <div class="field"><label>Minimum / reorder level (optional)</label><input id="f_min" type="number" step="any" value="0"></div>
+    <div class="field"><label>Comments (equipment, analog part numbers — optional)</label><textarea id="f_notes" placeholder="e.g. Used on Power Pack CT-1; analog: Fleetguard LF691"></textarea></div>
     <div class="sheet-actions"><button class="btn-cancel" id="cancel">Cancel</button>
       <button class="btn-save" id="save">Add</button></div>`);
   document.getElementById('cancel').onclick = closeSheet;
@@ -555,8 +609,10 @@ function openStockForm(){
     const name=document.getElementById('f_name').value.trim();
     const unit=document.getElementById('f_unit').value.trim()||'ea';
     const qty=parseFloat(document.getElementById('f_qty').value)||0;
+    const minLevel=parseFloat(document.getElementById('f_min').value)||0;
+    const notes=document.getElementById('f_notes').value.trim();
     if(!name){ toast('Enter a name'); return; }
-    const {data:item, error} = await sb.from('stock_items').insert({vessel,category,name,unit}).select().single();
+    const {data:item, error} = await sb.from('stock_items').insert({vessel,category,name,unit,low_stock_threshold:minLevel,notes}).select().single();
     if(error){ toast('Error: item may already exist'); console.error(error); return; }
     if(qty!==0){
       await sb.from('stock_transactions').insert({item_id:item.id, quantity:qty, reason:'Initial quantity'});
@@ -596,6 +652,24 @@ function openStockTxnForm(itemId, name, unit, mode){
     closeSheet(); toast('Saved'); renderStock();
   };
 }
+function openStockMinForm(itemId, name, unit, currentMin, currentNotes){
+  openSheet(`<h3>${name} — Item Info</h3>
+    <div class="field"><label>Minimum / reorder level (${unit})</label>
+      <input id="f_min" type="number" step="any" value="${currentMin||0}"></div>
+    <div class="field"><label>Comments (equipment it's used on, analog part numbers, etc.)</label>
+      <textarea id="f_notes" placeholder="e.g. Used on Power Pack CT-1; analog: Fleetguard LF691">${currentNotes||''}</textarea></div>
+    <div class="login-hint" style="text-align:left;margin-top:0;">When stock falls to or below the minimum, it's flagged as LOW STOCK on the list. Set to 0 to turn off the warning.</div>
+    <div class="sheet-actions"><button class="btn-cancel" id="cancel">Cancel</button>
+      <button class="btn-save" id="save">Save</button></div>`);
+  document.getElementById('cancel').onclick = closeSheet;
+  document.getElementById('save').onclick = async ()=>{
+    const min = parseFloat(document.getElementById('f_min').value) || 0;
+    const notes = document.getElementById('f_notes').value.trim();
+    const {error} = await sb.from('stock_items').update({low_stock_threshold:min, notes}).eq('id', itemId);
+    if(error){ toast('Save failed'); console.error(error); return; }
+    closeSheet(); toast('Item updated'); renderStock();
+  };
+}
 async function openStockHistory(itemId, name, unit){
   openSheet(`<h3>${name} — Usage Log</h3><div id="histList" class="field"><div class="empty">Loading...</div></div>
     <div class="sheet-actions"><button class="btn-cancel" id="cancel" style="flex:1;">Close</button></div>`);
@@ -618,81 +692,139 @@ async function openStockHistory(itemId, name, unit){
       </div></div>`;
   }).join('');
 }
-function openBatteryForm(){
-  openSheet(`<h3>New Battery</h3>
-    <div class="field"><label>Asset</label><input id="f_asset" placeholder="e.g. Power Pack PPJ81515"></div>
-    <div class="field"><label>Battery data</label><input id="f_data" placeholder="12V, 62A/h, 540A, Yuasa"></div>
-    <div class="field"><label>Qty</label><input id="f_qty" type="number" value="1"></div>
-    <div class="field"><label>Changed date</label><input id="f_date" type="date"></div>
-    <div class="field"><label>Comments</label><input id="f_comments"></div>
-    <div class="sheet-actions"><button class="btn-cancel" id="cancel">Cancel</button>
-      <button class="btn-save" id="save">Add</button></div>`);
-  document.getElementById('cancel').onclick = closeSheet;
+function openBatteryForm(existing){
+  const isEdit = !!existing;
+  openSheet(`<h3>${isEdit ? 'Update Battery' : 'New Battery'}</h3>
+    <div class="field"><label>Asset</label><input id="f_asset" placeholder="e.g. Power Pack PPJ81515" value="${isEdit?(existing.asset||'').replace(/"/g,'&quot;'):''}"></div>
+    <div class="field"><label>Battery data</label><input id="f_data" placeholder="12V, 62A/h, 540A, Yuasa" value="${isEdit?(existing.battery_data||'').replace(/"/g,'&quot;'):''}"></div>
+    <div class="field"><label>Qty</label><input id="f_qty" type="number" value="${isEdit?(existing.qty??1):1}"></div>
+    <div class="field"><label>Changed date</label><input id="f_date" type="date" value="${isEdit?(existing.changed_date||''):''}"></div>
+    <div class="field"><label>Comments</label><input id="f_comments" value="${isEdit?(existing.comments||'').replace(/"/g,'&quot;'):''}"></div>
+    <div class="sheet-actions">
+      ${isEdit ? '<button class="btn-cancel" id="del" style="color:var(--rust);border-color:#4a2a22 !important;">Delete</button>' : '<button class="btn-cancel" id="cancel">Cancel</button>'}
+      <button class="btn-save" id="save">${isEdit ? 'Save changes' : 'Add'}</button></div>
+    ${isEdit ? '<button class="btn-cancel" id="cancel2" style="width:100%;margin-top:10px;">Cancel</button>' : ''}`);
+  if(document.getElementById('cancel')) document.getElementById('cancel').onclick = closeSheet;
+  if(document.getElementById('cancel2')) document.getElementById('cancel2').onclick = closeSheet;
+  if(isEdit && document.getElementById('del')){
+    document.getElementById('del').onclick = async ()=>{
+      if(!confirm('Delete this battery record?')) return;
+      const {error} = await sb.from('battery_tracking').delete().eq('id', existing.id);
+      if(error){ toast('Delete failed'); console.error(error); return; }
+      closeSheet(); toast('Deleted'); renderBattery();
+    };
+  }
   document.getElementById('save').onclick = async ()=>{
     const asset=document.getElementById('f_asset').value.trim();
     if(!asset){ toast('Enter an asset'); return; }
-    const {error} = await sb.from('battery_tracking').insert({
+    const payload = {
       asset, battery_data:document.getElementById('f_data').value,
       qty:parseInt(document.getElementById('f_qty').value)||null,
       changed_date:document.getElementById('f_date').value||null,
       comments:document.getElementById('f_comments').value
-    });
+    };
+    let error;
+    if(isEdit){
+      payload.updated_at = new Date().toISOString();
+      payload.updated_by = currentUserId;
+      ({error} = await sb.from('battery_tracking').update(payload).eq('id', existing.id));
+    } else {
+      ({error} = await sb.from('battery_tracking').insert(payload));
+    }
     if(error){ toast('Save failed'); console.error(error); return; }
-    closeSheet(); toast('Added'); renderBattery();
+    closeSheet(); toast(isEdit ? 'Updated' : 'Added'); renderBattery();
   };
 }
-function openCrewForm(){
-  openSheet(`<h3>New Crew Change Entry</h3>
-    <div class="field"><label>Date</label><input id="f_date" type="date" value="${new Date().toISOString().slice(0,10)}"></div>
-    <div class="field"><label>Team</label><input id="f_team" placeholder="e.g. #CT1, #CT2, PJ, B. Base"></div>
-    <div class="field"><label>Position</label><input id="f_pos" placeholder="MT / ET"></div>
-    <div class="field"><label>No.</label><input id="f_seq" type="number" value="1"></div>
-    <div class="field"><label>Off (leaving)</label><input id="f_off"></div>
-    <div class="field"><label>On (arriving)</label><input id="f_on"></div>
-    <div class="field"><label>Destination</label><input id="f_dest"></div>
-    <div class="field"><label>Note</label><input id="f_note"></div>
-    <div class="sheet-actions"><button class="btn-cancel" id="cancel">Cancel</button>
-      <button class="btn-save" id="save">Add</button></div>`);
-  document.getElementById('cancel').onclick = closeSheet;
+function openCrewForm(existing){
+  const isEdit = !!existing;
+  const esc = v => (v||'').toString().replace(/"/g,'&quot;');
+  openSheet(`<h3>${isEdit?'Update Crew Entry':'New Crew Change Entry'}</h3>
+    <div class="field"><label>Watch start date</label><input id="f_date" type="date" value="${isEdit?existing.shift_date:new Date().toISOString().slice(0,10)}"></div>
+    <div class="field"><label>Watch end date (optional)</label><input id="f_end" type="date" value="${isEdit?(existing.shift_end_date||''):''}"></div>
+    <div class="field"><label>Team</label><input id="f_team" placeholder="e.g. #CT1, #CT2, PJ, B. Base" value="${isEdit?esc(existing.team):''}"></div>
+    <div class="field"><label>Position</label><input id="f_pos" placeholder="MT / ET" value="${isEdit?esc(existing.position):''}"></div>
+    <div class="field"><label>No.</label><input id="f_seq" type="number" value="${isEdit?(existing.seq_no??1):1}"></div>
+    <div class="field"><label>Off (leaving)</label><input id="f_off" value="${isEdit?esc(existing.off_employee):''}"></div>
+    <div class="field"><label>On (arriving)</label><input id="f_on" value="${isEdit?esc(existing.on_employee):''}"></div>
+    <div class="field"><label>Destination</label><input id="f_dest" value="${isEdit?esc(existing.destination):''}"></div>
+    <div class="field"><label>Note</label><input id="f_note" value="${isEdit?esc(existing.note):''}"></div>
+    <div class="sheet-actions">
+      ${isEdit ? '<button class="btn-cancel" id="del" style="color:var(--rust);border-color:#4a2a22 !important;">Delete</button>' : '<button class="btn-cancel" id="cancel">Cancel</button>'}
+      <button class="btn-save" id="save">${isEdit?'Save changes':'Add'}</button></div>
+    ${isEdit ? '<button class="btn-cancel" id="cancel2" style="width:100%;margin-top:10px;">Cancel</button>' : ''}`);
+  if(document.getElementById('cancel')) document.getElementById('cancel').onclick = closeSheet;
+  if(document.getElementById('cancel2')) document.getElementById('cancel2').onclick = closeSheet;
+  if(isEdit && document.getElementById('del')){
+    document.getElementById('del').onclick = async ()=>{
+      if(!confirm('Delete this crew entry?')) return;
+      const {error} = await sb.from('crew_change_plan').delete().eq('id', existing.id);
+      if(error){ toast('Delete failed'); console.error(error); return; }
+      closeSheet(); toast('Deleted'); renderCrew();
+    };
+  }
   document.getElementById('save').onclick = async ()=>{
     const team=document.getElementById('f_team').value.trim();
     const date=document.getElementById('f_date').value;
     if(!team||!date){ toast('Fill in date and team'); return; }
-    const {error} = await sb.from('crew_change_plan').insert({
-      shift_date:date, team, position:document.getElementById('f_pos').value,
+    const payload = {
+      shift_date:date, shift_end_date:document.getElementById('f_end').value||null,
+      team, position:document.getElementById('f_pos').value,
       seq_no:parseInt(document.getElementById('f_seq').value)||null,
       off_employee:document.getElementById('f_off').value, on_employee:document.getElementById('f_on').value,
       destination:document.getElementById('f_dest').value, note:document.getElementById('f_note').value
-    });
+    };
+    let error;
+    if(isEdit){ ({error} = await sb.from('crew_change_plan').update(payload).eq('id', existing.id)); }
+    else { ({error} = await sb.from('crew_change_plan').insert(payload)); }
     if(error){ toast('Save failed'); console.error(error); return; }
-    closeSheet(); toast('Added'); renderCrew();
+    closeSheet(); toast(isEdit?'Updated':'Added'); renderCrew();
   };
 }
-function openOrderForm(){
-  openSheet(`<h3>New Order</h3>
-    <div class="field"><label>Description</label><input id="f_desc" placeholder="e.g. Breakout Box"></div>
-    <div class="field"><label>SAP MN</label><input id="f_sap"></div>
-    <div class="field"><label>Manufacture MN</label><input id="f_mmn"></div>
-    <div class="field"><label>Quantity</label><input id="f_qty" type="number" value="1"></div>
-    <div class="field"><label>Unit</label><input id="f_uom" value="EA"></div>
-    <div class="field"><label>Requested by</label><input id="f_user"></div>
+function openOrderForm(existing){
+  const isEdit = !!existing;
+  const esc = v => (v||'').toString().replace(/"/g,'&quot;');
+  openSheet(`<h3>${isEdit?'Update Order':'New Order'}</h3>
+    <div class="field"><label>Description</label><input id="f_desc" placeholder="e.g. Breakout Box" value="${isEdit?esc(existing.description):''}"></div>
+    <div class="field"><label>SAP MN</label><input id="f_sap" value="${isEdit?esc(existing.sap_mn):''}"></div>
+    <div class="field"><label>Manufacture MN</label><input id="f_mmn" value="${isEdit?esc(existing.manufacture_mn):''}"></div>
+    <div class="field"><label>Quantity</label><input id="f_qty" type="number" value="${isEdit?(existing.quantity??1):1}"></div>
+    <div class="field"><label>Unit</label><input id="f_uom" value="${isEdit?esc(existing.uom||'EA'):'EA'}"></div>
+    <div class="field"><label>Requested by</label><input id="f_user" value="${isEdit?esc(existing.requested_by):''}"></div>
     <div class="field"><label>Status</label>
-      <select id="f_status"><option value="pending">Pending</option><option value="ordered">Ordered</option><option value="received">Received</option></select></div>
-    <div class="field"><label>Comments</label><input id="f_comments"></div>
-    <div class="sheet-actions"><button class="btn-cancel" id="cancel">Cancel</button>
-      <button class="btn-save" id="save">Add</button></div>`);
-  document.getElementById('cancel').onclick = closeSheet;
+      <select id="f_status">
+        <option value="pending" ${isEdit&&existing.status==='pending'?'selected':''}>Pending</option>
+        <option value="ordered" ${isEdit&&existing.status==='ordered'?'selected':''}>Ordered</option>
+        <option value="received" ${isEdit&&existing.status==='received'?'selected':''}>Received</option>
+      </select></div>
+    <div class="field"><label>Comments</label><input id="f_comments" value="${isEdit?esc(existing.comments):''}"></div>
+    <div class="sheet-actions">
+      ${isEdit ? '<button class="btn-cancel" id="del" style="color:var(--rust);border-color:#4a2a22 !important;">Delete</button>' : '<button class="btn-cancel" id="cancel">Cancel</button>'}
+      <button class="btn-save" id="save">${isEdit?'Save changes':'Add'}</button></div>
+    ${isEdit ? '<button class="btn-cancel" id="cancel2" style="width:100%;margin-top:10px;">Cancel</button>' : ''}`);
+  if(document.getElementById('cancel')) document.getElementById('cancel').onclick = closeSheet;
+  if(document.getElementById('cancel2')) document.getElementById('cancel2').onclick = closeSheet;
+  if(isEdit && document.getElementById('del')){
+    document.getElementById('del').onclick = async ()=>{
+      if(!confirm('Remove this order from the list? (e.g. after it has been ordered/received)')) return;
+      const {error} = await sb.from('order_tracking').delete().eq('id', existing.id);
+      if(error){ toast('Delete failed'); console.error(error); return; }
+      closeSheet(); toast('Removed'); renderOrders();
+    };
+  }
   document.getElementById('save').onclick = async ()=>{
     const description=document.getElementById('f_desc').value.trim();
     if(!description){ toast('Enter a description'); return; }
-    const {error} = await sb.from('order_tracking').insert({
+    const payload = {
       description, sap_mn:document.getElementById('f_sap').value, manufacture_mn:document.getElementById('f_mmn').value,
       quantity:parseFloat(document.getElementById('f_qty').value)||null, uom:document.getElementById('f_uom').value,
       requested_by:document.getElementById('f_user').value, status:document.getElementById('f_status').value,
       comments:document.getElementById('f_comments').value
-    });
+    };
+    let error;
+    if(isEdit){ ({error} = await sb.from('order_tracking').update(payload).eq('id', existing.id)); }
+    else { ({error} = await sb.from('order_tracking').insert(payload)); }
     if(error){ toast('Save failed'); console.error(error); return; }
-    closeSheet(); toast('Order added'); renderOrders();
+    closeSheet(); toast(isEdit?'Updated':'Order added'); renderOrders();
   };
 }
 
