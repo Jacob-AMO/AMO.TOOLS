@@ -215,9 +215,9 @@
       <small>OFFSHORE STOCK &amp; ASSET TRACKING</small>
     </div>
     <div class="login-error" id="loginError"></div>
-    <div class="field"><label>Email</label><input id="loginEmail" type="email" autocomplete="username" placeholder="you@company.com"></div>
+    <div class="field"><label>Email</label><input id="loginEmail" type="email" autocomplete="off" placeholder="you@company.com"></div>
     <div class="field"><label>Password</label>
-      <div class="pw-wrap"><input id="loginPassword" type="password" autocomplete="current-password" placeholder="••••••••">
+      <div class="pw-wrap"><input id="loginPassword" type="password" autocomplete="new-password" placeholder="••••••••">
       <button type="button" class="pw-toggle" id="pwToggle">👁</button></div></div>
     <button id="btnLogin">Sign in</button>
     <div class="login-hint">No personal account? Ask your admin for the shared guest login.</div>
@@ -274,6 +274,10 @@ function showLogin(){
   document.getElementById('main').style.display='none';
   document.getElementById('fab').style.display='none';
   document.getElementById('bottomNav').style.display='none';
+  document.getElementById('loginEmail').value='';
+  document.getElementById('loginPassword').value='';
+  document.getElementById('loginPassword').type='password';
+  $loginError.classList.remove('show');
 }
 function showApp(){
   $loginScreen.style.display='none';
